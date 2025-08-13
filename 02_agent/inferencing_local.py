@@ -56,7 +56,7 @@ config.to_dict()
 
 # COMMAND ----------
 
-query = "What was the latest customer service request?"
+query = "Can you give me some troubleshooting steps for SoundWave X5 Pro Headphones that won't connect?"
 
 # COMMAND ----------
 
@@ -212,6 +212,105 @@ display(Image(full_agent.get_graph().draw_mermaid_png()))
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC #### Define output parsers to pretty print output
+# MAGIC The Databricks UI, such as the AI Playground, can pretty-print tool calls (e.g. markdown text).
+# MAGIC Use the following helper functions to parse the LLM's output into the expected format.
+
+# COMMAND ----------
+
+from typing import Iterator, Dict, Any
+from langchain_core.messages import (
+    AIMessage,
+    HumanMessage,
+    ToolMessage,
+    MessageLikeRepresentation,
+)
+
+import json
+
+# Pretty-print requests to tool
+# def stringify_tool_call(tool_call: Dict[str, Any]) -> str:
+#     """
+#     Convert a raw tool call into a formatted string that the playground UI expects if there is enough information in the tool_call
+#     """
+#     try:
+#         request = json.dumps(
+#             {
+#                 "id": tool_call.get("id"),
+#                 "name": tool_call.get("name"),
+#                 "arguments": json.dumps(tool_call.get("args", {})),
+#             },
+#             indent=2,
+#         )
+#         return f"<tool_call>{request}</tool_call>"
+#     except:
+#         return str(tool_call)
+
+
+# Pretty-print responses from tool
+# content='Successfully transferred to retriever' name='transfer_to_retriever' id='b861eece-5601-4bf8-8255-74a9a3cf054b' tool_call_id='toolu_bdrk_01Ww4PFzz8CvHi3hm92FjDoZ'
+# to
+# <tool_call_result>{
+#   "id": "toolu_bdrk_01Ww4PFzz8CvHi3hm92FjDoZ",
+#   "content": "Successfully transferred to retriever"
+# }</tool_call_result>
+def stringify_tool_result(tool_msg: ToolMessage) -> str:
+    """
+    Convert a ToolMessage into a formatted string that the playground UI expects if there is enough information in the ToolMessage
+    """
+    try:
+        result = json.dumps(
+            {"id": tool_msg.tool_call_id, "content": tool_msg.content}, indent=2
+        )
+        return f"<tool_call_result>{result}</tool_call_result>"
+    except:
+        return str(tool_msg)
+
+
+# Parse messages using the above 2 pretty-print functions
+def parse_message(msg) -> str:
+    """Parse different message types into their string representations"""
+    # tool call result
+    if isinstance(msg, ToolMessage):
+        return stringify_tool_result(msg)
+    # AI msg from a tool call
+    # elif isinstance(msg, AIMessage) and msg.tool_calls:
+    #     tool_call_results = [stringify_tool_call(call) for call in msg.tool_calls]
+    #     return "".join(tool_call_results)
+    # normal HumanMessage or AIMessage (reasoning or final answer)
+    elif isinstance(msg, (AIMessage, HumanMessage)):
+        return msg.content
+    else:
+        print(f"Unexpected message type: {type(msg)}")
+        return str(msg)
+
+
+# Handle both outputs from invoke or stream
+def wrap_output(stream: Iterator[MessageLikeRepresentation]) -> Iterator[str]:
+    """
+    Process and yield formatted outputs from the message stream.
+    The invoke and stream langchain functions produce different output formats.
+    This function handles both cases.
+    """
+    for event in stream:
+        # the agent was called with invoke()
+        if "messages" in event:
+            for msg in event["messages"]:
+                yield parse_message(msg) + "\n\n"
+        # the agent was called with stream()
+        else:
+            for node in event:
+                for key, messages in event[node].items():
+                    if isinstance(messages, list):
+                        for msg in messages:
+                            yield parse_message(msg) + "\n\n"
+                    else:
+                        print("Unexpected value {messages} for key {key}. Expected a list of `MessageLikeRepresentation`'s")
+                        yield str(messages)
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## [OPTIONAL] Test unwrapped langgraph
 
 # COMMAND ----------
@@ -227,9 +326,11 @@ input_example = {
     ]
 }
 
-# config = {"configurable": {"thread_id": str(uuid4())}}
-# response = full_agent.invoke(input_example, config=config)
-# response
+# COMMAND ----------
+
+config = {"configurable": {"thread_id": str(uuid4())}}
+response = full_agent.invoke(input_example, config=config)
+response
 
 # COMMAND ----------
 
@@ -359,14 +460,7 @@ class WrappedAgent(ResponsesAgent):
         for msg in request.input:
             cc_msgs.extend(self._responses_to_cc(msg.model_dump()))
 
-        for event in self.agent.stream(
-            {
-                "messages": cc_msgs, 
-                "recursion_limit": 2
-            }, 
-            config=config, 
-            stream_mode=["updates", "messages"]
-        ):
+        for event in self.agent.stream({"messages": cc_msgs}, config=config, stream_mode=["updates", "messages"]):
             if event[0] == "updates":
                 for node_data in event[1].values():
                     for item in self._langchain_to_responses(node_data["messages"]):
@@ -435,6 +529,13 @@ class WrappedAgent(ResponsesAgent):
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ## Test the agent
+# MAGIC
+# MAGIC Interact with the agent to test its output. Since this notebook called `mlflow.langchain.autolog()` you can view the trace for each step the agent takes.
+
+# COMMAND ----------
+
 # from langchain_core.runnables import RunnableGenerator
 # from mlflow.langchain.output_parsers import ChatCompletionsOutputParser
 # # Ignore warning to use ChatCompletionOutputParser instead 
@@ -447,6 +548,67 @@ agent = WrappedAgent(full_agent)
 
 # The defines the object (i.e. agent) that will be logged in the driver NB even if the driver NB references this entire agent NB.
 mlflow.models.set_model(agent)
+
+# COMMAND ----------
+
+
+
+# COMMAND ----------
+
+# Input as dict
+agent.predict({
+    "input": [{"role": "user", "content": "What is 6*7 in Python?"}], 
+    "custom_inputs": {"thread_id": str(uuid4())}
+    })
+
+# COMMAND ----------
+
+# or input as ResponseAgentRequest
+request = ResponsesAgentRequest(input = input_example['messages'], 
+                                custom_inputs={"thread_id": str(uuid4())})
+response = agent.predict(request)
+response
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Test agent with memory
+
+# COMMAND ----------
+
+# Pass in thread_id via custom input from previous response.custom_outputs
+request = ResponsesAgentRequest(
+    input = [{
+        'role': 'user',
+        'content': "I tried your suggestions but it still won't connect. What should I do?"
+    }],
+    custom_inputs=response.custom_outputs)
+response = agent.predict(request)
+response
+
+# COMMAND ----------
+
+# New thread
+request = ResponsesAgentRequest(
+    input = [{
+        'role': 'user',
+        'content': "Who had the most customer service requests?"
+    }],
+    custom_inputs={"thread_id": str(uuid4())})
+response = agent.predict(request)
+response
+
+# COMMAND ----------
+
+# Pass in thread_id via custom input from previous response.custom_outputs
+request = ResponsesAgentRequest(
+    input = [{
+        'role': 'user',
+        'content': "What issue category was his requests most frequently associated with?"
+    }],
+    custom_inputs=response.custom_outputs)
+response = agent.predict(request)
+response
 
 # COMMAND ----------
 

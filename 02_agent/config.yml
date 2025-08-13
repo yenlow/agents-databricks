@@ -1,13 +1,14 @@
 catalog: yen_training
 schema: agents
-llm_endpoint: databricks-claude-3-7-sonnet
-genie_space_id: 01f02f99c88f159c8828d2ee1043c198
-genie_table: retail_prod.agents.cust_service_data
+#llm_endpoint: databricks-claude-3-7-sonnet
+llm_endpoint: databricks-meta-llama-3-3-70b-instruct
+genie_space_id: 01f07240bf1f1499b614a45b1d25b0a0
+genie_table: yen_training.agents.cust_service_data
 uc_functions:
   - yen_training.agents.*
 retriever:
   tool_name: search_product_docs
-  vs_endpoint: product_doc_endpoint
+  vs_endpoint: one-env-shared-endpoint-0
   vs_index: yen_training.agents.product_docs_vs
   vs_source: yen_training.agents.product_docs
   k: 5
