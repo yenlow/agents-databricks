@@ -13,10 +13,9 @@
 # MAGIC ## Part 1: Create tools
 # MAGIC ### 1.1 Create SQL Functions and register as UC Functions
 # MAGIC Create queries that access data critical to steps in the customer service workflow for processing a return.
-# MAGIC   1. `get_latest_interaction` -> date, issue_category, issue_description, customer_name
-# MAGIC   2. `extract_product` -> product in issue_description (uses `ai_extract`)
-# MAGIC   3. `get_return_policy` -> return policy
-# MAGIC   4. `get_request_history` -> number of requests per issue category for that customer
+# MAGIC   1. `get_return_policy` -> return policy
+# MAGIC   2. `get_request_history` -> number of requests per issue category for that customer
+# MAGIC   3. `extract_product` -> product in issue_description (uses `ai_extract`)
 # MAGIC
 # MAGIC While you can create tools coding them in LangChain/LangGraph, they may not be easily discovered for re-use. Instead, register them as [Unity Catalog Functions](https://docs.databricks.com/aws/en/generative-ai/agent-framework/agent-tool#unity-catalog-function-tools-vs-agent-code-tools)
 # MAGIC
@@ -62,91 +61,9 @@ spark.sql(f"CREATE SCHEMA IF NOT EXISTS {catalog_name}.{schema_name}")
 # MAGIC
 # MAGIC ---
 # MAGIC
-# MAGIC ## 1. Get the Latest Customer Request in the Processing Queue
-# MAGIC - **Action**: Identify and retrieve the most recent return request from the ticketing or returns system.  
-# MAGIC - **Why**: Ensures you’re working on the most urgent or next-in-line customer issue.
-# MAGIC
-# MAGIC ---
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC -- Select the date of the interaction, issue category, issue description, and customer name
-# MAGIC SELECT 
-# MAGIC   cast(date_time as date) as case_time, 
-# MAGIC   issue_category, 
-# MAGIC   issue_description, 
-# MAGIC   name
-# MAGIC FROM retail_prod.agents.cust_service_data 
-# MAGIC -- Order the results by the interaction date and time in descending order
-# MAGIC ORDER BY date_time DESC
-# MAGIC -- Limit the results to the most recent interaction
-# MAGIC LIMIT 1
-
-# COMMAND ----------
-
-# DBTITLE 1,Create a function registered to Unity Catalog
-# MAGIC %sql
-# MAGIC -- Now we create our first function. This takes in no parameters and returns the most recent interaction.
-# MAGIC CREATE OR REPLACE FUNCTION
-# MAGIC ${catalog_name}.${schema_name}.get_latest_interaction()
-# MAGIC returns table(purchase_date DATE, issue_category STRING, issue_description STRING, name STRING)
-# MAGIC COMMENT 'Returns the most recent customer service interaction, such as returns, technical support and billing requests.'
-# MAGIC return
-# MAGIC (
-# MAGIC   SELECT 
-# MAGIC     cast(date_time as date) as purchase_date, 
-# MAGIC     issue_category, 
-# MAGIC     issue_description, 
-# MAGIC     name
-# MAGIC   FROM ${catalog_name}.${schema_name}.cust_service_data 
-# MAGIC   ORDER BY date_time DESC
-# MAGIC   LIMIT 1
-# MAGIC )
-
-# COMMAND ----------
-
-# DBTITLE 1,Test function call to retrieve latest return
-# MAGIC %sql
-# MAGIC select * from ${catalog_name}.${schema_name}.get_latest_interaction()
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ---
-# MAGIC ## 2. Extract product name from `issue_description`
-# MAGIC Use [AI functions](https://docs.databricks.com/aws/en/large-language-models/ai-functions) to do batch (column-wise) LLM inferencing.<br>
-# MAGIC The base AI function is [`ai_query`](https://docs.databricks.com/aws/en/sql/language-manual/functions/ai_query) where you can specify an LLM endpoint and your prompt.<br>
-# MAGIC Here, we use [`ai_extract`](https://docs.databricks.com/aws/en/sql/language-manual/functions/ai_extract) to extract named entities such as the product name and make it a UC function tool
-# MAGIC ---
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC CREATE OR REPLACE FUNCTION ${catalog_name}.${schema_name}.extract_product(text STRING)
-# MAGIC RETURNS STRING
-# MAGIC COMMENT 'Returns the product mentioned in issue_description'
-# MAGIC LANGUAGE SQL
-# MAGIC RETURN ai_extract(text, array('product')).product
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC SELECT 
-# MAGIC   * , 
-# MAGIC   ${catalog_name}.${schema_name}.extract_product(issue_description) as product 
-# MAGIC FROM ${catalog_name}.${schema_name}.cust_service_data
-# MAGIC LIMIT 10
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ---
-# MAGIC
-# MAGIC ## 3. Retrieve Company Policies
+# MAGIC ## 1. UC SQL function: Retrieve Company Policies
 # MAGIC - **Action**: Access the internal knowledge base or policy documents related to returns, refunds, and exchanges.  
 # MAGIC - **Why**: Verifying you’re in compliance with company guidelines prevents potential errors and conflicts.
-# MAGIC
 # MAGIC ---
 
 # COMMAND ----------
@@ -174,7 +91,7 @@ spark.sql(f"CREATE SCHEMA IF NOT EXISTS {catalog_name}.{schema_name}")
 # MAGIC %md
 # MAGIC ---
 # MAGIC
-# MAGIC ## 4. Look Up the Order History by name
+# MAGIC ## 2. UC SQL function: Look Up the Order History by name
 # MAGIC - **Action**: Query your order management system or customer database using the customer's name.  
 # MAGIC - **Why**: Reviewing past purchases, return patterns, and any specific notes helps you determine appropriate next steps (e.g., confirm eligibility for return).
 # MAGIC
@@ -203,6 +120,101 @@ spark.sql(f"CREATE SCHEMA IF NOT EXISTS {catalog_name}.{schema_name}")
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ---
+# MAGIC ## 3. Extract product name from `issue_description`
+# MAGIC Use [AI functions](https://docs.databricks.com/aws/en/large-language-models/ai-functions) to do batch (column-wise) LLM inferencing.<br>
+# MAGIC The base AI function is [`ai_query`](https://docs.databricks.com/aws/en/sql/language-manual/functions/ai_query) where you can specify an LLM endpoint and your prompt.<br>
+# MAGIC Here, we use [`ai_extract`](https://docs.databricks.com/aws/en/sql/language-manual/functions/ai_extract) to extract named entities such as the product name and make it a UC function tool
+# MAGIC ---
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE FUNCTION ${catalog_name}.${schema_name}.extract_product(text STRING)
+# MAGIC RETURNS STRING
+# MAGIC COMMENT 'Returns the product mentioned in issue_description'
+# MAGIC LANGUAGE SQL
+# MAGIC RETURN ai_extract(text, array('product')).product
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMPORARY VIEW product_table AS
+# MAGIC SELECT 
+# MAGIC   * , 
+# MAGIC   ${catalog_name}.${schema_name}.extract_product(issue_description) as product 
+# MAGIC FROM ${catalog_name}.${schema_name}.cust_service_data
+# MAGIC LIMIT 10
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT * FROM product_table;
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 4. UC Python function to call external API
+
+# COMMAND ----------
+
+!curl "https://www.saferproducts.gov/RestWebServices/Recall?ProductName=Nuby%20Stroller%20Fans&format=json"
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE FUNCTION ${catalog_name}.${schema_name}.get_recall_api(product_name STRING)
+# MAGIC RETURNS STRING
+# MAGIC COMMENT 'Returns product recalls from the Consumer Product Safety Commissions'
+# MAGIC LANGUAGE PYTHON
+# MAGIC AS $$
+# MAGIC import requests
+# MAGIC
+# MAGIC if product_name is None:
+# MAGIC     return None
+# MAGIC
+# MAGIC elif product_name.lower() == 'product':
+# MAGIC     return None
+# MAGIC
+# MAGIC elif len(product_name)==0:
+# MAGIC     return None
+# MAGIC
+# MAGIC else:
+# MAGIC     url = "https://www.saferproducts.gov/RestWebServices/Recall"
+# MAGIC     headers = {
+# MAGIC         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+# MAGIC         }
+# MAGIC     data = {
+# MAGIC         "ProductName": product_name,
+# MAGIC         "format": "json"
+# MAGIC         }
+# MAGIC     response = requests.get(url, params=data, headers=headers)
+# MAGIC
+# MAGIC     if response.status_code == 200:
+# MAGIC         data = response.json()
+# MAGIC         if len(data)>0:
+# MAGIC             try:
+# MAGIC                 return data[0].get('Remedies')[0].get('Name')
+# MAGIC             except:
+# MAGIC                 return None
+# MAGIC         else:
+# MAGIC             return None
+# MAGIC
+# MAGIC     else: # API request failed
+# MAGIC         return None
+# MAGIC $$;
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT 
+# MAGIC   * , 
+# MAGIC   ${catalog_name}.${schema_name}.get_recall_api(product) as recall 
+# MAGIC FROM product_table
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## 5. Check out the SQL functions in UC 
 
 # COMMAND ----------
@@ -214,7 +226,7 @@ from IPython.display import display, HTML
 workspace_url = spark.conf.get('spark.databricks.workspaceUrl')
 
 # Create HTML link to created functions
-html_link = f'<a href="https://{workspace_url}/explore/data/functions/{catalog_name}/{schema_name}/get_requests_history" target="_blank">Go to Unity Catalog to see Registered Functions</a>'
+html_link = f'<a href="https://{workspace_url}/explore/data/functions/{catalog_name}/{schema_name}/get_recall_api" target="_blank">Go to Unity Catalog to see Registered Functions</a>'
 display(HTML(html_link))
 
 # COMMAND ----------

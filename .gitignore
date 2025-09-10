@@ -1,5 +1,6 @@
-02_agent/advanced/
+2_agent/advanced/
 lakebase/
+apps/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

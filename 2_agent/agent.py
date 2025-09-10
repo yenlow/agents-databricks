@@ -33,8 +33,13 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install -U -qq langchain==0.3.27 langchain_core==0.3.74 langchain-community==0.3.27 langgraph==0.6.4 langgraph-checkpoint==2.1.1 langgraph-prebuilt==0.6.4 langgraph-supervisor==0.0.29 pydantic==2.11.4 databricks-sdk==0.62.0 mlflow==3.2.0 databricks-langchain==0.6.0 databricks-vectorsearch==0.57
+# MAGIC %pip install -r ../requirements.txt
 # MAGIC dbutils.library.restartPython()
+
+# COMMAND ----------
+
+# MAGIC %load_ext autoreload
+# MAGIC %autoreload 2
 
 # COMMAND ----------
 
@@ -42,21 +47,15 @@
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC Use `mlflow.langchain.autolog()` to set up [MLflow traces](https://docs.databricks.com/en/mlflow/mlflow-tracing.html).
-
-# COMMAND ----------
-
 import mlflow
 from mlflow.models import ModelConfig
 
-mlflow.langchain.autolog()
-config = ModelConfig(development_config="config.yml")
-config.to_dict()
+cfg = ModelConfig(development_config="config.yml")
+cfg.to_dict()
 
 # COMMAND ----------
 
-query = "Can you give me some troubleshooting steps for SoundWave X5 Pro Headphones that won't connect?"
+query = "What was the latest customer service request?"
 
 # COMMAND ----------
 
@@ -76,7 +75,7 @@ query = "Can you give me some troubleshooting steps for SoundWave X5 Pro Headpho
 
 from databricks_langchain import ChatDatabricks
 
-llm = ChatDatabricks(endpoint=config.get("llm_endpoint"))
+llm = ChatDatabricks(endpoint=cfg.get("llm_endpoint"))
 
 # COMMAND ----------
 
@@ -90,7 +89,7 @@ from unitycatalog.ai.core.base import set_uc_function_client
 from unitycatalog.ai.core.databricks import DatabricksFunctionClient
 
 set_uc_function_client(DatabricksFunctionClient())
-uc_functions = config.get("uc_functions")
+uc_functions = cfg.get("uc_functions")
 sql_tools = UCFunctionToolkit(function_names=uc_functions).tools
 print(f"Functions in {uc_functions}:")
 [i.name for i in sql_tools]
@@ -99,7 +98,11 @@ print(f"Functions in {uc_functions}:")
 
 from langgraph.prebuilt import create_react_agent
 
-sql_prompt = "You are helpful agent that can use these SQL queries to get latest interaction from a queue of customer service requests, extract the product name from the customer request, get request history of a customer and query policies for return, refund or exchange."
+sql_prompt = """You are a helpful agent that can use these 3 tools:
+1. extract the product name from the customer request
+2. get request history of a customer
+3. query policies for return, refund or exchange
+"""
 sql_agent = create_react_agent(llm, tools=sql_tools, 
                                prompt=sql_prompt, name="sql")
 
@@ -111,9 +114,21 @@ sql_agent = create_react_agent(llm, tools=sql_tools,
 # COMMAND ----------
 
 python_tool = UCFunctionToolkit(function_names=["system.ai.python_exec"]).tools
-python_prompt = "You are helpful agent that can use these python functions to calculate transactions from customer service requests."
+python_prompt = "You are a helpful agent that can use the python REPL to calculate transactions from customer service requests."
 calculator_agent = create_react_agent(llm, tools=python_tool, 
                                       prompt=python_prompt, name="calculator")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### 4. Create a API agent to call the CPSC product recall API to get recall and remedy information
+
+# COMMAND ----------
+
+api_tool = UCFunctionToolkit(function_names=["yen_training.agents.get_recall_api"]).tools
+api_prompt = "You are a helpful agent that can query the Consumer Product Safety Commission recall API to enquire product recall information and its remedy if any"
+api_agent = create_react_agent(llm, tools=api_tool, 
+                               prompt=api_prompt, name="api")
 
 # COMMAND ----------
 
@@ -129,7 +144,7 @@ from databricks_langchain.genie import GenieAgent
 
 # Get you Genie space ID from the URL 
 # https://workspace_host/genie/rooms/<genie_id>/chats/...
-genie_space_id = config.get("genie_space_id")
+genie_space_id = cfg.get("genie_space_id")
 genie_agent = GenieAgent(genie_space_id, genie_agent_name="Chat with customer service table")
 
 # COMMAND ----------
@@ -145,8 +160,8 @@ from databricks_langchain import VectorSearchRetrieverTool
 import mlflow
 
 retriever_tool = VectorSearchRetrieverTool(
-  index_name=config.get('retriever')['vs_index'],
-  num_results=config.get('retriever')['k'],
+  index_name=cfg.get('retriever')['vs_index'],
+  num_results=cfg.get('retriever')['k'],
   columns=[
     "product_category",
     "product_sub_category",
@@ -155,7 +170,7 @@ retriever_tool = VectorSearchRetrieverTool(
     "product_id",
     "indexed_doc"
   ],
-  tool_name=config.get('retriever')['tool_name'],
+  tool_name=cfg.get('retriever')['tool_name'],
   tool_description="Use this tool to search for product documentation.",
 )
 
@@ -165,7 +180,7 @@ mlflow.models.set_retriever_schema(
     primary_key="product_id",
     text_column="indexed_doc",
     doc_uri="product_id",
-    name=config.get('retriever')['vs_index'],
+    name=cfg.get('retriever')['vs_index'],
 )
 
 retriever_prompt = "You are a helpful retriever agent that can look up product documentation"
@@ -181,161 +196,143 @@ retriever_agent = create_react_agent(llm, tools=[retriever_tool],
 # COMMAND ----------
 
 from langgraph_supervisor import create_supervisor
-from langgraph.checkpoint.memory import InMemorySaver
 
 supervisor_prompt = """You are a supervisor managing several agents:
 1. SQL agent: assign specific SQL query tasks to this agent such as extracting product names and looking up return policies and request history
 2. calculator agent: assign calculation tasks to this agent
-3. genie agent: assign chat with customer service data tasks to this agent
-4. retriever agent: assign product documentation search tasks to this agent
+3. API agent: look up the Consumer Product Safety Commission recall API to enquire product recall information and its remedy if any
+4. genie agent: assign chat with customer service data tasks to this agent
+5. retriever agent: assign product documentation search tasks to this agent
 Assign work to one agent at a time, do not call agents in parallel.
 Do not do any work yourself."""
 
-# If adding in-session memory
-memory = InMemorySaver()
-
 workflow = create_supervisor(
-    [sql_agent, calculator_agent, genie_agent, retriever_agent],
+    [sql_agent, calculator_agent, api_agent, genie_agent, retriever_agent],
     model=llm,
     prompt=supervisor_prompt,
     output_mode="last_message",
 )
 
-full_agent = workflow.compile(checkpointer=memory)
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Adding memory
+# MAGIC - **Short-term** memory for in-session multi-turn interactions
+# MAGIC - **Long-term** memory for between-session interactions
+# MAGIC In both cases, add Lakebase/Postgres DB backend to save the memory (either as short-term `PostgresSaver` or long-term `PostgresStore`)
+# MAGIC See [langgraph docs](https://langchain-ai.github.io/langgraph/how-tos/memory/add-memory/?h=#use-in-production)
 
 # COMMAND ----------
 
-from IPython.display import display, Image
+# If without DB backend for quick testing
+# from langgraph.checkpoint.memory import InMemorySaver
 
-display(Image(full_agent.get_graph().draw_mermaid_png()))
+# memory = InMemorySaver()
+# full_agent = workflow.compile(checkpointer=memory)
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC #### Define output parsers to pretty print output
-# MAGIC The Databricks UI, such as the AI Playground, can pretty-print tool calls (e.g. markdown text).
-# MAGIC Use the following helper functions to parse the LLM's output into the expected format.
+# MAGIC ### Connect to Lakebase 
 
 # COMMAND ----------
 
-from typing import Iterator, Dict, Any
-from langchain_core.messages import (
-    AIMessage,
-    HumanMessage,
-    ToolMessage,
-    MessageLikeRepresentation,
+# If with DB backend for production
+from langgraph.checkpoint.postgres import PostgresSaver
+from helper import LakebaseConnect
+from databricks.sdk import WorkspaceClient
+
+client_id=cfg.get("lakebase").get("client_id")
+w = WorkspaceClient(
+    host=cfg.get("host"),
+    client_id=client_id,
+    client_secret=cfg.get("lakebase").get("client_secret")
 )
 
-import json
+dbClient = LakebaseConnect(
+    user = client_id,
+    password = None, # leave None to generate ephemeral token (1h)
+    instance_name = cfg.get("lakebase").get("instance_name"), 
+    database = cfg.get("lakebase").get("database"),
+    wsClient = w
+)
+dbClient._connect()
+conninfo = dbClient.conninfo
 
-# Pretty-print requests to tool
-# def stringify_tool_call(tool_call: Dict[str, Any]) -> str:
-#     """
-#     Convert a raw tool call into a formatted string that the playground UI expects if there is enough information in the tool_call
-#     """
-#     try:
-#         request = json.dumps(
-#             {
-#                 "id": tool_call.get("id"),
-#                 "name": tool_call.get("name"),
-#                 "arguments": json.dumps(tool_call.get("args", {})),
-#             },
-#             indent=2,
-#         )
-#         return f"<tool_call>{request}</tool_call>"
-#     except:
-#         return str(tool_call)
+# COMMAND ----------
 
-
-# Pretty-print responses from tool
-# content='Successfully transferred to retriever' name='transfer_to_retriever' id='b861eece-5601-4bf8-8255-74a9a3cf054b' tool_call_id='toolu_bdrk_01Ww4PFzz8CvHi3hm92FjDoZ'
-# to
-# <tool_call_result>{
-#   "id": "toolu_bdrk_01Ww4PFzz8CvHi3hm92FjDoZ",
-#   "content": "Successfully transferred to retriever"
-# }</tool_call_result>
-def stringify_tool_result(tool_msg: ToolMessage) -> str:
-    """
-    Convert a ToolMessage into a formatted string that the playground UI expects if there is enough information in the ToolMessage
-    """
-    try:
-        result = json.dumps(
-            {"id": tool_msg.tool_call_id, "content": tool_msg.content}, indent=2
-        )
-        return f"<tool_call_result>{result}</tool_call_result>"
-    except:
-        return str(tool_msg)
-
-
-# Parse messages using the above 2 pretty-print functions
-def parse_message(msg) -> str:
-    """Parse different message types into their string representations"""
-    # tool call result
-    if isinstance(msg, ToolMessage):
-        return stringify_tool_result(msg)
-    # AI msg from a tool call
-    # elif isinstance(msg, AIMessage) and msg.tool_calls:
-    #     tool_call_results = [stringify_tool_call(call) for call in msg.tool_calls]
-    #     return "".join(tool_call_results)
-    # normal HumanMessage or AIMessage (reasoning or final answer)
-    elif isinstance(msg, (AIMessage, HumanMessage)):
-        return msg.content
-    else:
-        print(f"Unexpected message type: {type(msg)}")
-        return str(msg)
-
-
-# Handle both outputs from invoke or stream
-def wrap_output(stream: Iterator[MessageLikeRepresentation]) -> Iterator[str]:
-    """
-    Process and yield formatted outputs from the message stream.
-    The invoke and stream langchain functions produce different output formats.
-    This function handles both cases.
-    """
-    for event in stream:
-        # the agent was called with invoke()
-        if "messages" in event:
-            for msg in event["messages"]:
-                yield parse_message(msg) + "\n\n"
-        # the agent was called with stream()
-        else:
-            for node in event:
-                for key, messages in event[node].items():
-                    if isinstance(messages, list):
-                        for msg in messages:
-                            yield parse_message(msg) + "\n\n"
-                    else:
-                        print("Unexpected value {messages} for key {key}. Expected a list of `MessageLikeRepresentation`'s")
-                        yield str(messages)
+dbClient.test_query() # connects and closes pool too
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## [OPTIONAL] Test unwrapped langgraph
+# MAGIC ### Test unwrapped langgraph
 
 # COMMAND ----------
 
-from uuid import uuid4
+# Keep commented for fast mlflow logging in driver
+# from uuid import uuid4
+# from psycopg_pool import ConnectionPool
 
-input_example = {
-    "messages": [
-        {
-            "role": "user",
-            "content": query
-        }
-    ]
-}
+# input_example = {
+#     "messages": [
+#         {
+#             "role": "user",
+#             "content": query
+#         }
+#     ]
+# }
+# config = {"configurable": {"thread_id": str(uuid4())}}
 
-# COMMAND ----------
+# # Using langgraph docs
+# # with PostgresSaver.from_conn_string(db_uri) as checkpointer:
+# #     checkpointer.setup() # if setting up for the first time
+# #     full_agent = workflow.compile(checkpointer=checkpointer)
+# #     response = full_agent.invoke(input_example, config=config)
 
-config = {"configurable": {"thread_id": str(uuid4())}}
-response = full_agent.invoke(input_example, config=config)
-response
+# # Better to use a connection pool
+# checkpointer = PostgresSaver(dbClient.connection_pool)
+# # checkpointer.setup() # if setting up for the first time
+# full_agent = workflow.compile(checkpointer=checkpointer)
+# response = full_agent.invoke(input_example, config=config)
+# # dbClient.close()
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Wrap into a ChatAgent 
+# MAGIC The langgraph checkpoints will be saved in the Postgres database in a table called `checkpoints`
+# MAGIC
+# MAGIC You can run a PostgresSQL query by going to
+# MAGIC Compute > Lakebase Postgres > <your instance> > New Query
+# MAGIC ```
+# MAGIC select * from <your_database>.public.checkpoints;
+# MAGIC ```
+
+# COMMAND ----------
+
+# Keep commented for fast mlflow logging in driver
+# import pandas as pd
+
+# dbClient._connect()
+# data = dbClient.query("SELECT * FROM checkpoints")
+# pd.DataFrame(data).tail()
+# # dbClient.close()
+
+# COMMAND ----------
+
+# Uncomment to test stream mode
+# Keep commented for fast mlflow logging in driver
+# for event in full_agent.stream(
+#     input_example,
+#     config=config, 
+#     stream_mode=["updates", "messages"]
+# ):
+#     print(event)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Wrap into a ResponsesAgent 
 # MAGIC Required by mlflow with custom inputs/outputs
 
 # COMMAND ----------
@@ -355,10 +352,42 @@ from mlflow.types.responses import (
     ResponsesAgentStreamEvent,
 )
 from typing import Any, Generator, Optional, Union
+from langgraph.graph.state import CompiledStateGraph, StateGraph
+from psycopg_pool import ConnectionPool
 
 class WrappedAgent(ResponsesAgent):
-    def __init__(self, agent):
-        self.agent = agent
+    def __init__(self, 
+                 agent: Union[CompiledStateGraph, StateGraph], 
+                 conninfo: str = None):
+        # if without memory
+        if isinstance(agent, CompiledStateGraph):
+            self.agent = agent
+            self.workflow = None
+            self.conninfo = conninfo
+            self.pool = None
+            self.checkpointer = None
+        # if with memory
+        elif isinstance(agent, StateGraph):
+            self.agent = None
+            self.workflow = agent
+            self.conninfo = conninfo
+            self.pool = ConnectionPool(
+                conninfo=self.conninfo,
+                kwargs={'autocommit': True},
+                min_size=1,
+                max_size=10,
+                open=True)
+            self.checkpointer = PostgresSaver(self.pool)
+        else:
+            raise Exception("agent must be either a langgraph CompiledStateGraph or a StateGraph")
+
+    def _add_memory(self):
+        if self.workflow is not None and self.checkpointer is not None:
+            self.agent = self.workflow.compile(checkpointer=self.checkpointer)
+        elif self.workflow is not None and self.checkpointer is None:
+            # No memory
+            self.agent = self.workflow.compile()
+            print("No checkpointer found so compiling workflow without memory")
 
     def _responses_to_cc(self, message: dict[str, Any]) -> list[dict[str, Any]]:
         """Convert from a Responses API output item to ChatCompletion messages."""
@@ -460,7 +489,16 @@ class WrappedAgent(ResponsesAgent):
         for msg in request.input:
             cc_msgs.extend(self._responses_to_cc(msg.model_dump()))
 
-        for event in self.agent.stream({"messages": cc_msgs}, config=config, stream_mode=["updates", "messages"]):
+        if self.checkpointer:
+            self._add_memory()
+        for event in self.agent.stream(
+            {
+                "messages": cc_msgs, 
+                "recursion_limit": 2
+            }, 
+            config=config, 
+            stream_mode=["updates", "messages"]
+        ):
             if event[0] == "updates":
                 for node_data in event[1].values():
                     for item in self._langchain_to_responses(node_data["messages"]):
@@ -482,67 +520,12 @@ class WrappedAgent(ResponsesAgent):
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC
-# MAGIC from uuid import uuid4
-# MAGIC from typing import List, Dict, Any
-# MAGIC from mlflow.pyfunc import ResponsesAgent
-# MAGIC from mlflow.types.responses import (
-# MAGIC     ResponsesAgentRequest,
-# MAGIC     ResponsesAgentResponse,
-# MAGIC )
-# MAGIC
-# MAGIC class WrappedAgent(ResponsesAgent):
-# MAGIC     def __init__(self, agent):
-# MAGIC         # Reference your existing agent
-# MAGIC         self.agent = agent
-# MAGIC
-# MAGIC     def prep_msgs_for_llm(self, request_list: List[dict[str, str]]) -> Dict[str, List[dict]]:
-# MAGIC         last_user_msg = [i for i in request_list if i.get("role") == "user"][-1]
-# MAGIC         return {'messages': [{'role': 'user',
-# MAGIC    'content': last_user_msg['content']}]}
-# MAGIC
-# MAGIC     def predict(self, request: ResponsesAgentRequest) -> ResponsesAgentResponse:
-# MAGIC         # Convert incoming messages to your agent's format
-# MAGIC         # prep_msgs_for_llm is a function you write to convert the incoming messages
-# MAGIC         messages = self.prep_msgs_for_llm([i.model_dump() for i in request.input])
-# MAGIC         if request.custom_inputs:
-# MAGIC             config = {"configurable": {"thread_id": request.custom_inputs.get("thread_id", str(uuid4()))}}
-# MAGIC         else:
-# MAGIC             config = {"configurable": {"thread_id": str(uuid4())}}
-# MAGIC
-# MAGIC         # Call your existing agent (non-streaming)
-# MAGIC         agent_response = self.agent.invoke(messages, config=config)
-# MAGIC
-# MAGIC         # Convert your agent's output to ResponsesAgent format, assuming agent_response is a str
-# MAGIC         output_item = (self.create_text_output_item(text=agent_response['messages'][-1].content, id=agent_response['messages'][-1].id))
-# MAGIC
-# MAGIC         # Return the response
-# MAGIC         return ResponsesAgentResponse(output=[output_item],
-# MAGIC                                       text=agent_response['messages'][-1].content, 
-# MAGIC                                       #metadata subtypes are incompatible with ResponsesAgentResponse types
-# MAGIC                                       #metadata=agent_response['messages'][-1].response_metadata, 
-# MAGIC                                       model=agent_response['messages'][-1].response_metadata['model'],
-# MAGIC                                       id=agent_response['messages'][-1].id,
-# MAGIC                                       #tools=list(agent_response['messages'][-1].name),
-# MAGIC                                       custom_outputs={"thread_id": config["configurable"]["thread_id"]})
+# If without memory
+# agent = WrappedAgent(full_agent)
+# If with memory
+# Disable gssencmode to avoid GSSAPI-encrypted connection in Serving
 
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Test the agent
-# MAGIC
-# MAGIC Interact with the agent to test its output. Since this notebook called `mlflow.langchain.autolog()` you can view the trace for each step the agent takes.
-
-# COMMAND ----------
-
-# from langchain_core.runnables import RunnableGenerator
-# from mlflow.langchain.output_parsers import ChatCompletionsOutputParser
-# # Ignore warning to use ChatCompletionOutputParser instead 
-# # (not compatible with streaming output)
-
-# agent = full_agent | RunnableGenerator(wrap_output) | ChatCompletionsOutputParser()
-agent = WrappedAgent(full_agent)
+agent = WrappedAgent(workflow, conninfo)
 
 # COMMAND ----------
 
@@ -551,64 +534,31 @@ mlflow.models.set_model(agent)
 
 # COMMAND ----------
 
-
-
-# COMMAND ----------
-
-# Input as dict
-agent.predict({
-    "input": [{"role": "user", "content": "What is 6*7 in Python?"}], 
-    "custom_inputs": {"thread_id": str(uuid4())}
-    })
-
-# COMMAND ----------
-
-# or input as ResponseAgentRequest
-request = ResponsesAgentRequest(input = input_example['messages'], 
-                                custom_inputs={"thread_id": str(uuid4())})
-response = agent.predict(request)
-response
-
-# COMMAND ----------
-
 # MAGIC %md
-# MAGIC ## Test agent with memory
+# MAGIC ## Test inferencing
 
 # COMMAND ----------
 
-# Pass in thread_id via custom input from previous response.custom_outputs
-request = ResponsesAgentRequest(
-    input = [{
-        'role': 'user',
-        'content': "I tried your suggestions but it still won't connect. What should I do?"
-    }],
-    custom_inputs=response.custom_outputs)
-response = agent.predict(request)
-response
+# # Comment this out so mlflow logging of this NB will be faster
+# # Input as dict
+# response1 = agent.predict({
+#     "input": [{"role": "user", "content": "What is 6*7 in Python?"}], 
+#     "custom_inputs": {"thread_id": str(uuid4())}
+#     })
 
-# COMMAND ----------
+# # or input as ResponseAgentRequest
+# request = ResponsesAgentRequest(input = input_example['messages'], 
+#                                 custom_inputs={"thread_id": str(uuid4())})
+# response2 = agent.predict(request)
 
-# New thread
-request = ResponsesAgentRequest(
-    input = [{
-        'role': 'user',
-        'content': "Who had the most customer service requests?"
-    }],
-    custom_inputs={"thread_id": str(uuid4())})
-response = agent.predict(request)
-response
-
-# COMMAND ----------
-
-# Pass in thread_id via custom input from previous response.custom_outputs
-request = ResponsesAgentRequest(
-    input = [{
-        'role': 'user',
-        'content': "What issue category was his requests most frequently associated with?"
-    }],
-    custom_inputs=response.custom_outputs)
-response = agent.predict(request)
-response
+# # Pass in thread_id via custom input from previous response2.custom_outputs
+# request = ResponsesAgentRequest(
+#     input = [{
+#         'role': 'user',
+#         'content': "I tried your suggestions but it still won't connect. What should I do?"
+#     }],
+#     custom_inputs=response2.custom_outputs)
+# response3 = agent.predict(request)
 
 # COMMAND ----------
 
@@ -618,3 +568,9 @@ response
 # MAGIC You can rerun the cells above to iterate and test the agent.
 # MAGIC
 # MAGIC Go to the auto-generated [driver]($./driver) notebook in this folder to log, register, and deploy the agent.
+
+# COMMAND ----------
+
+# from IPython.display import display, Image
+
+# display(Image(full_agent.get_graph().draw_mermaid_png(max_retries=5, retry_delay=2.0)))
