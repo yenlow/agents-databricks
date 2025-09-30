@@ -1,15 +1,37 @@
 from databricks.sdk import WorkspaceClient
 import psycopg
 from psycopg_pool import ConnectionPool
-#from sqlalchemy import create_engine, text
+
+# from sqlalchemy import create_engine, text
 from uuid import uuid4
 import mlflow
 from typing import List
 import pandas as pd
 
 
+def get_SP_credentials(
+    scope: str,
+    client_id_key: str,
+    client_secret_key: str,
+    client_id_value: str = None,
+    client_secret_value: str = None,
+):
+    # Do not use dbutils.secrets.get(scope="yen", key="client_secret") which is unsupported in mlflow logging in Driver
+    from base64 import b64decode
+
+    w0 = WorkspaceClient()
+    if not client_id_value:
+        id_base64 = w0.secrets.get_secret(scope, client_id_key).value
+        client_id_value = b64decode(id_base64).decode("utf-8")
+    if not client_secret_value:
+        secret_base64 = w0.secrets.get_secret(scope, client_secret_key).value
+        client_secret_value = b64decode(secret_base64).decode("utf-8")
+    return client_id_value, client_secret_value
+
+
 def get_latest_model_version(model_name):
     from mlflow.tracking import MlflowClient
+
     mlflow_client = MlflowClient(registry_uri="databricks-uc")
     latest_version = 1
     for mv in mlflow_client.search_model_versions(f"name='{model_name}'"):
@@ -29,7 +51,7 @@ class LakebaseConnect:
         database: str = "yen_lakebase",
         password: str = None,
         port: int = 5432,
-        wsClient: WorkspaceClient = WorkspaceClient()
+        wsClient: WorkspaceClient = WorkspaceClient(),
     ):
         """
         Initialize the database connection.
@@ -49,7 +71,9 @@ class LakebaseConnect:
         self.w = wsClient
         instance = self.w.database.get_database_instance(name=self.instance_name)
         self.host = instance.read_write_dns
-        print(f"WorkspaceClient initialized with user {self.w.current_user.me().user_name}")
+        print(
+            f"WorkspaceClient initialized with user {self.w.current_user.me().user_name}"
+        )
 
     def _connect(self):
         """Set up the database connection using Databricks workspace client."""
@@ -62,14 +86,14 @@ class LakebaseConnect:
             self.password = cred.token
 
         self.url = f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.database}?sslmode=require"
-        self.conninfo = f"dbname={self.database} user={self.user} password={self.password} host={self.host}"
+        self.conninfo = f"dbname={self.database} user={self.user} password={self.password} host={self.host} sslmode=require"
 
         self.connection_pool = ConnectionPool(
             conninfo=self.conninfo,
-            kwargs={'autocommit': True},
+            kwargs={"autocommit": True},
             min_size=1,
             max_size=10,
-            open=True
+            open=True,
         )
         # If using sqlalchemy
         # Ensure psycopg and not psycopg2 (default)
@@ -119,9 +143,11 @@ def evaldf_mlflow2_to_3(df: pd.DataFrame) -> List:
     eval_dataset_v3 = []
     for idx, row in df.iterrows():
         response = row["expected_facts"][0]
-        eval_dataset_v3.append({
-            "inputs": {"request": row["request"]},
-            "outputs": {"response": response},
-            "expectations": {"expected_response": response}
-        })
+        eval_dataset_v3.append(
+            {
+                "inputs": {"request": row["request"]},
+                "outputs": {"response": response},
+                "expectations": {"expected_response": response},
+            }
+        )
     return eval_dataset_v3

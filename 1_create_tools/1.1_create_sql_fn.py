@@ -215,7 +215,60 @@ spark.sql(f"CREATE SCHEMA IF NOT EXISTS {catalog_name}.{schema_name}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 5. Check out the SQL functions in UC 
+# MAGIC ## 5. Tools on External MCP Server (Github) 
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC DROP CONNECTION IF EXISTS yen_github_conn;
+# MAGIC CREATE CONNECTION yen_github_conn 
+# MAGIC TYPE HTTP
+# MAGIC OPTIONS (
+# MAGIC   host 'https://api.github.com',
+# MAGIC   port 443,
+# MAGIC   base_path '/',
+# MAGIC   bearer_token '<your_github_token>'
+# MAGIC )
+# MAGIC COMMENT 'Create connection with external Github MCP server'
+# MAGIC ;
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC -- Test connection
+# MAGIC SELECT http_request(
+# MAGIC   conn => 'yen_github_conn',
+# MAGIC   method => 'GET',
+# MAGIC   path => concat('/users/', 'yenlow', '/repos'),
+# MAGIC   headers => map(
+# MAGIC     'Accept', "application/vnd.github+json"
+# MAGIC   )
+# MAGIC );
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE FUNCTION ${catalog_name}.${schema_name}.list_repos(
+# MAGIC   user STRING  COMMENT 'GitHub username'
+# MAGIC )
+# MAGIC RETURNS STRING
+# MAGIC COMMENT 'Returns JSON array of public repos for a user'
+# MAGIC RETURN http_request(
+# MAGIC   conn => 'yen_github_conn',
+# MAGIC   method => 'GET',
+# MAGIC   path => concat('/users/', user, '/repos'),
+# MAGIC   headers => map('Accept', "application/vnd.github+json")
+# MAGIC ).text;
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT ${catalog_name}.${schema_name}.list_repos('yenlow');
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 6. Check out the SQL functions in UC 
 
 # COMMAND ----------
 
@@ -231,9 +284,18 @@ display(HTML(html_link))
 
 # COMMAND ----------
 
+# MAGIC %sql
+# MAGIC DROP FUNCTION ${catalog_name}.${schema_name}.list_my_repos;
+
+# COMMAND ----------
+
 # MAGIC %md
-# MAGIC ## 6. Test the tools in AI Playground
+# MAGIC ## 7. Test the tools in AI Playground
 # MAGIC - Bind the tools to a LLM that can reason and plan which tool to use
 # MAGIC - Dive deeper into the agent’s performance by exploring MLflow traces.
 # MAGIC
 # MAGIC The AI Playground can be found on the left navigation bar under 'Machine Learning' or you can use the link created below
+
+# COMMAND ----------
+
+

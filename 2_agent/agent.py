@@ -133,7 +133,19 @@ api_agent = create_react_agent(llm, tools=api_tool,
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### 4. Create Genie Agent that lets you chat with structured table(s)
+# MAGIC ### 5. Create an agent connected to an existing external MCP Server with Github tools
+
+# COMMAND ----------
+
+mcp_tool = UCFunctionToolkit(function_names=["yen_training.agents.list_repos"]).tools
+mcp_prompt = "You are a helpful agent connected to an external Github MCP server that provide Github related tools like listing repositories."
+mcp_agent = create_react_agent(llm, tools=mcp_tool, 
+                               prompt=mcp_prompt, name="mcp")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### 6. Create Genie Agent that lets you chat with structured table(s)
 # MAGIC This assumes you have set up a Genie space earlier in [1.2_create_genie_space]($../01_create_tools/1.2_create_genie_space)
 # MAGIC
 # MAGIC Note: unlike SQL functions who perform highly specific queries, Genie space will generate free-form SQL code in response to your chat requests and query the customer service table it is attached to.
@@ -150,7 +162,7 @@ genie_agent = GenieAgent(genie_space_id, genie_agent_name="Chat with customer se
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### 5. Create a retriever agent that queries unstructured text
+# MAGIC ### 7. Create a retriever agent that queries unstructured text
 # MAGIC This assumes you have set up a Vector Store earlier in [0_setup]($../01_create_tools/0_setup).<br>
 # MAGIC Note: While `VectorSearchRetrieverTool` was instantiated in [1.3_create_retriever](($../01_create_tools/1.3_create_retriever) to persist as a UC function, `VectorSearchRetrieverTool` exists only in memory and will need to be re-instantiated here (or imported)
 
@@ -201,13 +213,14 @@ supervisor_prompt = """You are a supervisor managing several agents:
 1. SQL agent: assign specific SQL query tasks to this agent such as extracting product names and looking up return policies and request history
 2. calculator agent: assign calculation tasks to this agent
 3. API agent: look up the Consumer Product Safety Commission recall API to enquire product recall information and its remedy if any
-4. genie agent: assign chat with customer service data tasks to this agent
-5. retriever agent: assign product documentation search tasks to this agent
+4. MCP agent: look up Github external MCP server for related repositories
+5. genie agent: assign chat with customer service data tasks to this agent
+6. retriever agent: assign product documentation search tasks to this agent
 Assign work to one agent at a time, do not call agents in parallel.
 Do not do any work yourself."""
 
 workflow = create_supervisor(
-    [sql_agent, calculator_agent, api_agent, genie_agent, retriever_agent],
+    [sql_agent, calculator_agent, api_agent, genie_agent, retriever_agent, mcp_agent],
     model=llm,
     prompt=supervisor_prompt,
     output_mode="last_message",
@@ -239,14 +252,23 @@ workflow = create_supervisor(
 
 # If with DB backend for production
 from langgraph.checkpoint.postgres import PostgresSaver
-from helper import LakebaseConnect
+from helper import LakebaseConnect, get_SP_credentials
 from databricks.sdk import WorkspaceClient
 
-client_id=cfg.get("lakebase").get("client_id")
+# Enter client_id, client_secret of SP if any or get from WorkspaceClient.secrets
+# Do not use dbutils.secrets.get(scope="yen", key="client_secret") which is unsupported in mlflow logging in Driver
+client_id, client_secret = get_SP_credentials(
+    scope='yen',
+    client_id_key='client_id',
+    client_secret_key='client_secret',
+    client_id_value = "a0afe011-adee-4c61-ba13-37f1a37ff53b", # Hardcode client_id if any
+    client_secret_value = "dose4d4ba3bcf743e7a2c31e2b5dd44155ce" # Hardcode client_secret if any
+)
+
 w = WorkspaceClient(
     host=cfg.get("host"),
     client_id=client_id,
-    client_secret=cfg.get("lakebase").get("client_secret")
+    client_secret=client_secret
 )
 
 dbClient = LakebaseConnect(
@@ -256,8 +278,6 @@ dbClient = LakebaseConnect(
     database = cfg.get("lakebase").get("database"),
     wsClient = w
 )
-dbClient._connect()
-conninfo = dbClient.conninfo
 
 # COMMAND ----------
 
@@ -270,10 +290,20 @@ dbClient.test_query() # connects and closes pool too
 
 # COMMAND ----------
 
-# Keep commented for fast mlflow logging in driver
-# from uuid import uuid4
-# from psycopg_pool import ConnectionPool
+dbClient._connect()
 
+# Better to use a connection pool
+checkpointer = PostgresSaver(dbClient.connection_pool)
+# checkpointer.setup() # if setting up for the first time
+full_agent = workflow.compile(checkpointer=checkpointer)
+
+# COMMAND ----------
+
+# # Keep commented for fast mlflow logging in driver
+# Test invoking unwrapped langgraph
+
+# from uuid import uuid4
+#
 # input_example = {
 #     "messages": [
 #         {
@@ -283,19 +313,9 @@ dbClient.test_query() # connects and closes pool too
 #     ]
 # }
 # config = {"configurable": {"thread_id": str(uuid4())}}
-
-# # Using langgraph docs
-# # with PostgresSaver.from_conn_string(db_uri) as checkpointer:
-# #     checkpointer.setup() # if setting up for the first time
-# #     full_agent = workflow.compile(checkpointer=checkpointer)
-# #     response = full_agent.invoke(input_example, config=config)
-
-# # Better to use a connection pool
-# checkpointer = PostgresSaver(dbClient.connection_pool)
-# # checkpointer.setup() # if setting up for the first time
-# full_agent = workflow.compile(checkpointer=checkpointer)
+#
 # response = full_agent.invoke(input_example, config=config)
-# # dbClient.close()
+# response
 
 # COMMAND ----------
 
@@ -310,7 +330,7 @@ dbClient.test_query() # connects and closes pool too
 
 # COMMAND ----------
 
-# Keep commented for fast mlflow logging in driver
+# # Keep commented for fast mlflow logging in driver
 # import pandas as pd
 
 # dbClient._connect()
@@ -320,8 +340,8 @@ dbClient.test_query() # connects and closes pool too
 
 # COMMAND ----------
 
-# Uncomment to test stream mode
-# Keep commented for fast mlflow logging in driver
+# # Uncomment to test stream mode
+# # Keep commented for fast mlflow logging in driver
 # for event in full_agent.stream(
 #     input_example,
 #     config=config, 
@@ -525,6 +545,9 @@ class WrappedAgent(ResponsesAgent):
 # If with memory
 # Disable gssencmode to avoid GSSAPI-encrypted connection in Serving
 
+dbClient._connect()
+conninfo = dbClient.conninfo
+# print(conninfo) # for debugging
 agent = WrappedAgent(workflow, conninfo)
 
 # COMMAND ----------
@@ -536,6 +559,13 @@ mlflow.models.set_model(agent)
 
 # MAGIC %md
 # MAGIC ## Test inferencing
+
+# COMMAND ----------
+
+response1 = agent.predict({
+    "input": [{"role": "user", "content": "What is 6*7 in Python?"}], 
+    "custom_inputs": {"thread_id": str(uuid4())}
+    })
 
 # COMMAND ----------
 
@@ -560,6 +590,11 @@ mlflow.models.set_model(agent)
 #     custom_inputs=response2.custom_outputs)
 # response3 = agent.predict(request)
 
+# response4 = agent.predict({
+#     "input": [{"role": "user", "content": "What are my repos in github given username yenlow?"}], 
+#     "custom_inputs": {"thread_id": str(uuid4())}
+#     })
+
 # COMMAND ----------
 
 # MAGIC %md
@@ -571,6 +606,12 @@ mlflow.models.set_model(agent)
 
 # COMMAND ----------
 
-# from IPython.display import display, Image
+# from IPython.display import display as Idisplay 
+# from IPython.display import Image
 
-# display(Image(full_agent.get_graph().draw_mermaid_png(max_retries=5, retry_delay=2.0)))
+# print(full_agent.get_graph().draw_mermaid())
+# Idisplay(Image(full_agent.get_graph().draw_mermaid_png(max_retries=5, retry_delay=2.0)))
+
+# COMMAND ----------
+
+

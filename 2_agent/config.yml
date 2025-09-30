@@ -1,7 +1,6 @@
 host: https://e2-demo-field-eng.cloud.databricks.com/
 catalog: yen_training
 schema: agents
-#llm_endpoint: databricks-claude-3-7-sonnet
 llm_endpoint: databricks-meta-llama-3-3-70b-instruct
 genie_space_id: 01f07240bf1f1499b614a45b1d25b0a0
 genie_table: yen_training.agents.cust_service_data
@@ -9,7 +8,6 @@ uc_functions:
   - yen_training.agents.extract_product
   - yen_training.agents.get_requests_history
   - yen_training.agents.get_return_policy
-#  - yen_training.agents.*
 retriever:
   tool_name: search_product_docs
   vs_endpoint: one-env-shared-endpoint-0
@@ -20,6 +18,3 @@ retriever:
 lakebase:
   instance_name: fe_shared_demo
   database: yen_lakebase
-  # Manual SP
-  client_id: your_client_id
-  client_secret: your_client_secret
