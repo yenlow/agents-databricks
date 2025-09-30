@@ -1,0 +1,21 @@
+langchain==0.3.27
+langchain-community==0.3.27
+langgraph==0.6.4
+langgraph-prebuilt==0.6.4
+langgraph-supervisor==0.0.29
+pydantic==2.11.4
+git+https://github.com/unitycatalog/unitycatalog.git#subdirectory=ai/core
+git+https://github.com/unitycatalog/unitycatalog.git#subdirectory=ai/integrations/openai
+databricks_langchain==0.6.0
+databricks-vectorsearch==0.57
+databricks-sdk==0.62
+mlflow>=3.3.2
+ipython
+pyyaml
+# For memory. Comment out if not needed
+langgraph-checkpoint==2.1.1
+langgraph-checkpoint-postgres==2.0.23
+# ensure psycopg ad psycopg-binary are the same versions
+psycopg==3.2.9
+psycopg-binary==3.2.9
+psycopg-pool==3.2.6

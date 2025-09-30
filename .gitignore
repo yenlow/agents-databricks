@@ -1,4 +1,5 @@
-02_agent/advanced/
+2_agent/advanced/
+lakebase/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

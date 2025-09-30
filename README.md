@@ -1,5 +1,12 @@
 # Building Multi-agent Systems with Databricks
-**Objective:** Build a customer service agent system to handle customer requests and do product Q&A.
+**Objective:** Build an end-to-end multi-agent that showcases the full agentic capabilities of Databricks:
+- AI/BI Genie
+- Vector Search (RAG)
+- SQL/Python functions
+- external MCP
+- external REST API
+- LakeBase memory
+- Databricks Apps webapp
 
 ![](graph.png)
 ## Part 1: Create tools
