@@ -1,11 +1,11 @@
 command: [
-  "streamlit", 
+  "chainlit",
   "run",
-  "app.py"
+  "chainlit_app.py",
+  "--host", "0.0.0.0",
+  "--port", "8000"
 ]
 
 env:
-  - name: STREAMLIT_BROWSER_GATHER_USAGE_STATS
-    value: "false"
   - name: "SERVING_ENDPOINT"
     value: "aatww"

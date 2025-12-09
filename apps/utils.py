@@ -1,17 +1,39 @@
 import os
 import requests
 import json
-import streamlit as st
 from databricks.sdk import WorkspaceClient
 
 
-def get_user_info():
-    headers = st.context.headers
+def get_user_info_from_headers(headers: dict) -> dict:
+    """Extract user info from HTTP headers (framework-agnostic).
+
+    Args:
+        headers: Dictionary of HTTP headers
+
+    Returns:
+        Dictionary with user_name, user_email, and user_id
+    """
+    if headers is None:
+        headers = {}
     return dict(
         user_name=headers.get("X-Forwarded-Preferred-Username"),
         user_email=headers.get("X-Forwarded-Email"),
         user_id=headers.get("X-Forwarded-User"),
     )
+
+
+def get_user_info():
+    """Get user info from Streamlit context headers.
+
+    This function is Streamlit-specific. For Chainlit, use get_user_info_from_headers.
+    """
+    try:
+        import streamlit as st
+        headers = st.context.headers
+        return get_user_info_from_headers(headers)
+    except ImportError:
+        # Streamlit not available, return empty dict
+        return dict(user_name=None, user_email=None, user_id=None)
 
 
 def ask_agent(input_dict: dict, w: WorkspaceClient = None) -> requests.models.Response:
