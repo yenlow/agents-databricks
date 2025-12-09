@@ -2,7 +2,7 @@ host: https://e2-demo-field-eng.cloud.databricks.com/
 catalog: yen_training
 schema: agents
 llm_endpoint: databricks-meta-llama-3-3-70b-instruct
-genie_space_id: 01f07240bf1f1499b614a45b1d25b0a0
+genie_space_id: 01f0ca478c1517b2ac6fdcc04eec967f
 genie_table: yen_training.agents.cust_service_data
 uc_functions:
   - yen_training.agents.extract_product
@@ -16,5 +16,5 @@ retriever:
   k: 5
 # for agentic memory
 lakebase:
-  instance_name: fe_shared_demo
+  instance_name: fe-shared-demo
   database: yen_lakebase

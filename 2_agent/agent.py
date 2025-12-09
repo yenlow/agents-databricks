@@ -34,6 +34,7 @@
 # COMMAND ----------
 
 # MAGIC %pip install -r ../requirements.txt
+# MAGIC # %pip install -U databricks-connect # ensure 17+
 # MAGIC dbutils.library.restartPython()
 
 # COMMAND ----------
@@ -84,9 +85,11 @@ llm = ChatDatabricks(endpoint=cfg.get("llm_endpoint"))
 
 # COMMAND ----------
 
-from databricks_langchain import UCFunctionToolkit
-from unitycatalog.ai.core.base import set_uc_function_client
-from unitycatalog.ai.core.databricks import DatabricksFunctionClient
+from databricks_langchain.uc_ai import (
+  DatabricksFunctionClient,
+  UCFunctionToolkit,
+  set_uc_function_client,
+)
 
 set_uc_function_client(DatabricksFunctionClient())
 uc_functions = cfg.get("uc_functions")
@@ -96,15 +99,14 @@ print(f"Functions in {uc_functions}:")
 
 # COMMAND ----------
 
-from langgraph.prebuilt import create_react_agent
+from langchain.agents import create_agent
 
 sql_prompt = """You are a helpful agent that can use these 3 tools:
 1. extract the product name from the customer request
 2. get request history of a customer
 3. query policies for return, refund or exchange
 """
-sql_agent = create_react_agent(llm, tools=sql_tools, 
-                               prompt=sql_prompt, name="sql")
+sql_agent = create_agent(llm, tools=sql_tools, system_prompt=sql_prompt, name="sql")
 
 # COMMAND ----------
 
@@ -115,8 +117,9 @@ sql_agent = create_react_agent(llm, tools=sql_tools,
 
 python_tool = UCFunctionToolkit(function_names=["system.ai.python_exec"]).tools
 python_prompt = "You are a helpful agent that can use the python REPL to calculate transactions from customer service requests."
-calculator_agent = create_react_agent(llm, tools=python_tool, 
-                                      prompt=python_prompt, name="calculator")
+calculator_agent = create_agent(
+    llm, tools=python_tool, system_prompt=python_prompt, name="calculator"
+)
 
 # COMMAND ----------
 
@@ -125,22 +128,47 @@ calculator_agent = create_react_agent(llm, tools=python_tool,
 
 # COMMAND ----------
 
-api_tool = UCFunctionToolkit(function_names=["yen_training.agents.get_recall_api"]).tools
+api_tool = UCFunctionToolkit(
+    function_names=["yen_training.agents.get_recall_api"]
+).tools
 api_prompt = "You are a helpful agent that can query the Consumer Product Safety Commission recall API to enquire product recall information and its remedy if any"
-api_agent = create_react_agent(llm, tools=api_tool, 
-                               prompt=api_prompt, name="api")
+api_agent = create_agent(
+    llm, tools=api_tool, system_prompt=api_prompt, name="api"
+)
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### 5. Create an agent connected to an existing external MCP Server with Github tools
+# MAGIC ### 5a. Create an agent connected to an existing external MCP Server with Github tools
 
 # COMMAND ----------
 
-mcp_tool = UCFunctionToolkit(function_names=["yen_training.agents.list_repos"]).tools
-mcp_prompt = "You are a helpful agent connected to an external Github MCP server that provide Github related tools like listing repositories."
-mcp_agent = create_react_agent(llm, tools=mcp_tool, 
-                               prompt=mcp_prompt, name="mcp")
+ext_mcp_tool = UCFunctionToolkit(function_names=["yen_training.agents.list_repos"]).tools
+ext_mcp_prompt = "You are a helpful agent connected to an external Github MCP server that provides Github related tools like listing repositories."
+ext_mcp_agent = create_agent(llm, tools=ext_mcp_tool, system_prompt=ext_mcp_prompt, name="ext_mcp")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### 5b. Create an agent connected to custom MCP Server with news and weather tools hosted on Databricks Apps
+
+# COMMAND ----------
+
+import asyncio
+from mcp_utils import create_mcp_tools, workspace_client
+
+custom_mcp_tools = asyncio.run(
+    create_mcp_tools(
+        ws=workspace_client,
+        managed_server_urls=None, #for Databricks-managed MCP servers
+        custom_server_urls=["https://mcp-nitin-1444828305810485.aws.databricksapps.com/mcp"]
+    )
+)
+custom_mcp_prompt = "You are a helpful agent connected on a Databricks MCP server that provides news and the weather information."
+custom_mcp_agent = create_agent(
+    llm, tools=custom_mcp_tools, system_prompt=custom_mcp_prompt, name="custom_mcp"
+)
+custom_mcp_tools
 
 # COMMAND ----------
 
@@ -172,18 +200,18 @@ from databricks_langchain import VectorSearchRetrieverTool
 import mlflow
 
 retriever_tool = VectorSearchRetrieverTool(
-  index_name=cfg.get('retriever')['vs_index'],
-  num_results=cfg.get('retriever')['k'],
-  columns=[
-    "product_category",
-    "product_sub_category",
-    "product_name",
-    "product_doc",
-    "product_id",
-    "indexed_doc"
-  ],
-  tool_name=cfg.get('retriever')['tool_name'],
-  tool_description="Use this tool to search for product documentation.",
+    index_name=cfg.get("retriever")["vs_index"],
+    num_results=cfg.get("retriever")["k"],
+    columns=[
+        "product_category",
+        "product_sub_category",
+        "product_name",
+        "product_doc",
+        "product_id",
+        "indexed_doc",
+    ],
+    tool_name=cfg.get("retriever")["tool_name"],
+    tool_description="Use this tool to search for product documentation.",
 )
 
 # Set retriever schema to be returned
@@ -192,17 +220,20 @@ mlflow.models.set_retriever_schema(
     primary_key="product_id",
     text_column="indexed_doc",
     doc_uri="product_id",
-    name=cfg.get('retriever')['vs_index'],
+    name=cfg.get("retriever")["vs_index"],
 )
 
-retriever_prompt = "You are a helpful retriever agent that can look up product documentation"
-retriever_agent = create_react_agent(llm, tools=[retriever_tool], 
-                                     prompt=retriever_prompt, name="retriever")
+retriever_prompt = (
+    "You are a helpful retriever agent that can look up product documentation"
+)
+retriever_agent = create_agent(
+    llm, tools=[retriever_tool], system_prompt=retriever_prompt, name="retriever"
+)
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### 6. Create a supervisor agent
+# MAGIC ### 8. Create a supervisor agent
 # MAGIC The supervisor will reason and plan the requests and assigns them to the appropriate agent(s).
 
 # COMMAND ----------
@@ -213,14 +244,15 @@ supervisor_prompt = """You are a supervisor managing several agents:
 1. SQL agent: assign specific SQL query tasks to this agent such as extracting product names and looking up return policies and request history
 2. calculator agent: assign calculation tasks to this agent
 3. API agent: look up the Consumer Product Safety Commission recall API to enquire product recall information and its remedy if any
-4. MCP agent: look up Github external MCP server for related repositories
-5. genie agent: assign chat with customer service data tasks to this agent
-6. retriever agent: assign product documentation search tasks to this agent
+4. External MCP agent: access Github external MCP server for related repositories
+5. Custom MCP agent: access MCP server with custom weather and news tools
+6. genie agent: assign chat with customer service data tasks to this agent
+7. retriever agent: assign product documentation search tasks to this agent
 Assign work to one agent at a time, do not call agents in parallel.
 Do not do any work yourself."""
 
 workflow = create_supervisor(
-    [sql_agent, calculator_agent, api_agent, genie_agent, retriever_agent, mcp_agent],
+    [sql_agent, calculator_agent, api_agent, genie_agent, retriever_agent, ext_mcp_agent, custom_mcp_agent],
     model=llm,
     prompt=supervisor_prompt,
     output_mode="last_message",
@@ -259,11 +291,14 @@ from databricks.sdk import WorkspaceClient
 # Do not use dbutils.secrets.get(scope="yen", key="client_secret") which is unsupported in mlflow logging in Driver
 client_id, client_secret = get_SP_credentials(
     scope='yen',
-    client_id_key='client_id',
-    client_secret_key='client_secret',
-    client_id_value = "a0afe011-adee-4c61-ba13-37f1a37ff53b", # Hardcode client_id if any
-    client_secret_value = "dose4d4ba3bcf743e7a2c31e2b5dd44155ce" # Hardcode client_secret if any
+    client_id_key='client_id', #if retrieving secrets (but doesn't work with mlflow logging)
+    client_secret_key='client_secret', #if retrieving secrets (but doesn't work with mlflow logging)
+    # must provide hardcoded values as mlflow log_model cannot retrieve secrets
+    client_id_value = 'a0afe011-adee-4c61-ba13-37f1a37ff53b', # Hardcode client_id if any
+    client_secret_value = 'dose4d4ba3bcf743e7a2c31e2b5dd44155ce' # Hardcode client_secret if any
 )
+
+# COMMAND ----------
 
 w = WorkspaceClient(
     host=cfg.get("host"),
@@ -294,16 +329,16 @@ dbClient._connect()
 
 # Better to use a connection pool
 checkpointer = PostgresSaver(dbClient.connection_pool)
-# checkpointer.setup() # if setting up for the first time
+# checkpointer.setup() # if setting up for the first time (ensure that your SP has create table permissions)
 full_agent = workflow.compile(checkpointer=checkpointer)
 
 # COMMAND ----------
 
 # # Keep commented for fast mlflow logging in driver
-# Test invoking unwrapped langgraph
+# # Test invoking unwrapped langgraph
 
 # from uuid import uuid4
-#
+
 # input_example = {
 #     "messages": [
 #         {
@@ -312,8 +347,8 @@ full_agent = workflow.compile(checkpointer=checkpointer)
 #         }
 #     ]
 # }
-# config = {"configurable": {"thread_id": str(uuid4())}}
-#
+# config = {"configurable": {"thread_id": uuid4().int}}
+
 # response = full_agent.invoke(input_example, config=config)
 # response
 
@@ -335,13 +370,13 @@ full_agent = workflow.compile(checkpointer=checkpointer)
 
 # dbClient._connect()
 # data = dbClient.query("SELECT * FROM checkpoints")
-# pd.DataFrame(data).tail()
-# # dbClient.close()
+# dbClient.close()
+# display(pd.DataFrame(data).tail())
 
 # COMMAND ----------
 
-# # Uncomment to test stream mode
-# # Keep commented for fast mlflow logging in driver
+# Uncomment to test stream mode
+# Keep commented for fast mlflow logging in driver
 # for event in full_agent.stream(
 #     input_example,
 #     config=config, 
@@ -409,51 +444,6 @@ class WrappedAgent(ResponsesAgent):
             self.agent = self.workflow.compile()
             print("No checkpointer found so compiling workflow without memory")
 
-    def _responses_to_cc(self, message: dict[str, Any]) -> list[dict[str, Any]]:
-        """Convert from a Responses API output item to ChatCompletion messages."""
-        msg_type = message.get("type")
-        if msg_type == "function_call":
-            return [
-                {
-                    "role": "assistant",
-                    "content": "tool call",
-                    "tool_calls": [
-                        {
-                            "id": message["call_id"],
-                            "type": "function",
-                            "function": {
-                                "arguments": message["arguments"],
-                                "name": message["name"],
-                            },
-                        }
-                    ],
-                }
-            ]
-        elif msg_type == "message" and isinstance(message["content"], list):
-            return [
-                {"role": message["role"], "content": content["text"]}
-                for content in message["content"]
-            ]
-        elif msg_type == "reasoning":
-            return [{"role": "assistant", "content": json.dumps(message["summary"])}]
-        elif msg_type == "function_call_output":
-            return [
-                {
-                    "role": "tool",
-                    "content": message["output"],
-                    "tool_call_id": message["call_id"],
-                }
-            ]
-        compatible_keys = ["role", "content", "name", "tool_calls", "tool_call_id"]
-        filtered = {k: v for k, v in message.items() if k in compatible_keys}
-        return [filtered] if filtered else []
-
-    def _prep_msgs_for_cc_llm(self, responses_input) -> list[dict[str, Any]]:
-        "Convert from Responses input items to ChatCompletion dictionaries"
-        cc_msgs = []
-        for msg in responses_input:
-            cc_msgs.extend(self._responses_to_cc(msg.model_dump()))
-
     def _langchain_to_responses(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "Convert from ChatCompletion dict to Responses output item dictionaries"
         for message in messages:
@@ -463,7 +453,7 @@ class WrappedAgent(ResponsesAgent):
                 if tool_calls := message.get("tool_calls"):
                     return [
                         self.create_function_call_item(
-                            id=message.get("id") or str(uuid4()),
+                            id=message.get("id") or uuid4().int,
                             call_id=tool_call["id"],
                             name=tool_call["name"],
                             arguments=json.dumps(tool_call["args"]),
@@ -474,7 +464,7 @@ class WrappedAgent(ResponsesAgent):
                     return [
                         self.create_text_output_item(
                             text=message["content"],
-                            id=message.get("id") or str(uuid4()),
+                            id=message.get("id") or uuid4().int,
                         )
                     ]
             elif role == "tool":
@@ -501,9 +491,9 @@ class WrappedAgent(ResponsesAgent):
         request: ResponsesAgentRequest,
     ) -> Generator[ResponsesAgentStreamEvent, None, None]:
         try:
-            config = {"configurable": {"thread_id": request.custom_inputs.get("thread_id", str(uuid4()))}}
+            config = {"configurable": {"thread_id": request.custom_inputs.get("thread_id", uuid4().int)}}
         except Exception as e:
-            config = {"configurable": {"thread_id": str(uuid4())}}
+            config = {"configurable": {"thread_id": uuid4().int}}
 
         cc_msgs = []
         for msg in request.input:
@@ -542,9 +532,9 @@ class WrappedAgent(ResponsesAgent):
 
 # If without memory
 # agent = WrappedAgent(full_agent)
+
 # If with memory
 # Disable gssencmode to avoid GSSAPI-encrypted connection in Serving
-
 dbClient._connect()
 conninfo = dbClient.conninfo
 # print(conninfo) # for debugging
@@ -562,23 +552,23 @@ mlflow.models.set_model(agent)
 
 # COMMAND ----------
 
-response1 = agent.predict({
-    "input": [{"role": "user", "content": "What is 6*7 in Python?"}], 
-    "custom_inputs": {"thread_id": str(uuid4())}
-    })
+# response1 = agent.predict({
+#     "input": [{"role": "user", "content": "What is 6*7 in Python?"}], 
+#     "custom_inputs": {"thread_id": uuid4().int}
+#     })
 
 # COMMAND ----------
 
-# # Comment this out so mlflow logging of this NB will be faster
-# # Input as dict
+# Comment this out so mlflow logging of this NB will be faster
+# Input as dict
 # response1 = agent.predict({
-#     "input": [{"role": "user", "content": "What is 6*7 in Python?"}], 
-#     "custom_inputs": {"thread_id": str(uuid4())}
+#     "input": [{"role": "user", "content": "What is the weather today?"}], 
+#     "custom_inputs": {"thread_id": uuid4().int}
 #     })
 
 # # or input as ResponseAgentRequest
 # request = ResponsesAgentRequest(input = input_example['messages'], 
-#                                 custom_inputs={"thread_id": str(uuid4())})
+#                                 custom_inputs={"thread_id": uuid4().int})
 # response2 = agent.predict(request)
 
 # # Pass in thread_id via custom input from previous response2.custom_outputs
@@ -592,7 +582,7 @@ response1 = agent.predict({
 
 # response4 = agent.predict({
 #     "input": [{"role": "user", "content": "What are my repos in github given username yenlow?"}], 
-#     "custom_inputs": {"thread_id": str(uuid4())}
+#     "custom_inputs": {"thread_id": uuid4().int}
 #     })
 
 # COMMAND ----------
@@ -609,8 +599,11 @@ response1 = agent.predict({
 # from IPython.display import display as Idisplay 
 # from IPython.display import Image
 
-# print(full_agent.get_graph().draw_mermaid())
 # Idisplay(Image(full_agent.get_graph().draw_mermaid_png(max_retries=5, retry_delay=2.0)))
+
+# COMMAND ----------
+
+# print(full_agent.get_graph().draw_mermaid())
 
 # COMMAND ----------
 

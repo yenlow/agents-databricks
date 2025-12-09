@@ -38,6 +38,7 @@ st.sidebar.markdown("""E2E Multi-Agent Supervisor with:
 - Vector Search (product documents)
 - SQL/Python functions
 - external MCP (Github tools)
+- custom MCP (weather/news tools hosted on Apps)
 - external API (Product recalls)
 - LakeBase (memory)
 - Databricks Apps""")
@@ -86,6 +87,7 @@ if prompt := st.chat_input("What is up?"):
 
         # Display assistant response in chat message container
         with st.chat_message("assistant"):
+            tool_call = None
             # Query the Databricks serving endpoint
             messages = st.session_state.messages[-1]
             print(messages)
@@ -104,12 +106,14 @@ if prompt := st.chat_input("What is up?"):
             #     "\n".join(text_contents) if text_contents else "No text content found"
             # )
             # Use the first message instead of showing all the bad agent attempts
-            assistant_response = text_contents[0]
-
-            if tool_call:
-                st.markdown(f"Tool: {tool_call}")
-            if text_contents:
-                st.markdown(assistant_response)
+            # if tool_call:
+            #     st.markdown(f"Tool: {tool_call}")
+            if len(text_contents)>0:
+                assistant_response = text_contents[0]
+            else:
+                assistant_response = "No response returned. Try again"
+            st.markdown(assistant_response)
+                
 
         # Add assistant response to chat history
         st.session_state.messages.append(
