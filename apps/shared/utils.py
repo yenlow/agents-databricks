@@ -1,6 +1,12 @@
+"""
+Shared utility functions for AATWW chat applications.
+
+This module provides common functionality used by both Streamlit and Chainlit
+implementations of the chat interface.
+"""
+
 import os
 import requests
-import json
 from databricks.sdk import WorkspaceClient
 
 
@@ -37,13 +43,23 @@ def get_user_info():
 
 
 def ask_agent(input_dict: dict, w: WorkspaceClient = None) -> requests.models.Response:
-    # Example input_dict:
-    # input_dict = {
-    #     "input": [
-    #         {"role": "user", "content": "What is the latest customer service request?"}
-    #     ],
-    #     "custom_inputs": {"thread_id": "1001"},
-    # }
+    """Send a request to the Databricks serving endpoint using requests.
+
+    Args:
+        input_dict: Dictionary containing input messages and options
+        w: WorkspaceClient instance (optional, will create one if not provided)
+
+    Returns:
+        Response object from the API call
+
+    Example input_dict:
+        {
+            "input": [
+                {"role": "user", "content": "What is the latest customer service request?"}
+            ],
+            "custom_inputs": {"thread_id": "1001"},
+        }
+    """
     url = f'https://e2-demo-field-eng.cloud.databricks.com/serving-endpoints/{os.getenv("SERVING_ENDPOINT")}/invocations'
     if w is None:
         w = WorkspaceClient()
@@ -61,13 +77,30 @@ def ask_agent(input_dict: dict, w: WorkspaceClient = None) -> requests.models.Re
 
 
 def ask_agent_mlflowclient(input_dict: dict, client) -> dict:
-    # returns response.json()
+    """Send a request to the Databricks serving endpoint using MLflow client.
+
+    Args:
+        input_dict: Dictionary containing input messages and options
+        client: MLflow deployment client
+
+    Returns:
+        Response JSON dictionary
+    """
     return client.predict(endpoint=os.getenv("SERVING_ENDPOINT"), inputs=input_dict)
 
 
-def extract_text_content(response_json):
-    # Extract text content from the response (equivalent to jq extraction)
-    # jq -r '.output[] | select(.type == "message") | .content[] | .text'
+def extract_text_content(response_json: dict) -> list:
+    """Extract text content from the agent response.
+
+    This is equivalent to the jq extraction:
+    jq -r '.output[] | select(.type == "message") | .content[] | .text'
+
+    Args:
+        response_json: JSON response from the agent
+
+    Returns:
+        List of text content strings
+    """
     text_contents = []
     for output_item in response_json.get("output", []):
         if output_item.get("type") == "message":

@@ -1,10 +1,14 @@
 import os
+import sys
 import logging
 import chainlit as cl
-from utils import ask_agent_mlflowclient, extract_text_content, get_user_info_from_headers
 from uuid import uuid4
 from mlflow.deployments import get_deploy_client
 from databricks.sdk import WorkspaceClient
+
+# Add shared module to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'shared'))
+from utils import ask_agent_mlflowclient, extract_text_content, get_user_info_from_headers
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
