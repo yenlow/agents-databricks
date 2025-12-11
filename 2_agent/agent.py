@@ -6,11 +6,14 @@
 # MAGIC 2. [driver]($./driver): references the agent code then logs, registers, evaluates and deploys the agent.
 # MAGIC 3. [config.yml]($./config.yml): contains the configuration settings.
 # MAGIC
-# MAGIC This notebook uses [Mosaic AI Agent Framework](https://docs.databricks.com/en/generative-ai/retrieval-augmented-generation.html) to create your agent. It defines a supervisory LangChain agent that decides which other 4 ReAct agents to assign tasks too. These 4 agents are:
+# MAGIC This notebook uses [Mosaic AI Agent Framework](https://docs.databricks.com/en/generative-ai/retrieval-augmented-generation.html) to create your agent. It defines a supervisory LangChain agent that decides which other agents to assign tasks too. These 7 agents are:
 # MAGIC 1. **SQL agent** that can run SQL functions (including batch AI functions) as tools
 # MAGIC 2. **Calculator agent** that can run python code for mathematical calculations
-# MAGIC 3. **Genie agent** that can do Q&A on structured table(s) using natural language
-# MAGIC 4. **Retriever agent** that can do Q&A on unstructured text in a Vector Store
+# MAGIC 3. **API agent** that can call the Consumer Product Safety Commission API regarding recalls
+# MAGIC 4. **Genie agent** that can do Q&A on structured table(s) using natural language
+# MAGIC 5. **Retriever agent** that can do Q&A on unstructured text in a Vector Store
+# MAGIC 6. **external MCP** that can interact with an externally-hosted MCP server with Github tools
+# MAGIC 7. **custom MCP** that can interact with a Databricks-Apps-hosted MCP server with custom news and weather tools
 # MAGIC ![](../graph.png)
 # MAGIC
 # MAGIC  **_NOTE:_**  This notebook uses LangChain, however Mosaic AI Agent Framework is [compatible](%md
@@ -69,7 +72,7 @@ query = "What was the latest customer service request?"
 # MAGIC
 # MAGIC The LLM operates in a loop. In each iteration, it selects a tool to invoke, provides input, receives the result (an observation), and uses that observation to inform the next action. The loop continues until a stopping condition is met — typically when the agent has gathered enough information to respond to the user.
 # MAGIC
-# MAGIC ### 1. Set the LLM for the ReAct Agents
+# MAGIC ### 1. Set up the LLM
 # MAGIC The LLM can be different for different agents. For simplicity, we will use the same LLM endpoint
 
 # COMMAND ----------
@@ -235,6 +238,14 @@ retriever_agent = create_agent(
 # MAGIC %md
 # MAGIC ### 8. Create a supervisor agent
 # MAGIC The supervisor will reason and plan the requests and assigns them to the appropriate agent(s).
+# MAGIC
+# MAGIC Example:
+# MAGIC
+# MAGIC User: “Is product ABC recalled by CPSC?”
+# MAGIC
+# MAGIC Supervisor reasoning: This is a recall question → Route to API agent
+# MAGIC
+# MAGIC Workflow: Supervisor → API agent → Supervisor → User
 
 # COMMAND ----------
 
@@ -294,8 +305,8 @@ client_id, client_secret = get_SP_credentials(
     client_id_key='client_id', #if retrieving secrets (but doesn't work with mlflow logging)
     client_secret_key='client_secret', #if retrieving secrets (but doesn't work with mlflow logging)
     # must provide hardcoded values as mlflow log_model cannot retrieve secrets
-    client_id_value = 'a0afe011-adee-4c61-ba13-37f1a37ff53b', # Hardcode client_id if any
-    client_secret_value = 'dose4d4ba3bcf743e7a2c31e2b5dd44155ce' # Hardcode client_secret if any
+    client_id_value = 'your_client_id', # Hardcode client_id if any
+    client_secret_value = 'your_client_secret' # Hardcode client_secret if any
 )
 
 # COMMAND ----------
@@ -534,10 +545,8 @@ class WrappedAgent(ResponsesAgent):
 # agent = WrappedAgent(full_agent)
 
 # If with memory
-# Disable gssencmode to avoid GSSAPI-encrypted connection in Serving
 dbClient._connect()
 conninfo = dbClient.conninfo
-# print(conninfo) # for debugging
 agent = WrappedAgent(workflow, conninfo)
 
 # COMMAND ----------

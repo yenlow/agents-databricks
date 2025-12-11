@@ -1,3 +1,5 @@
+# this script wires up LLM + MCP + tooling, enabling an agent that can take real actions on Databricks, not just generate text.
+
 import asyncio
 from typing import Annotated, Any, Generator, List, Optional, Sequence, TypedDict, Union
 
@@ -90,8 +92,8 @@ MANAGED_MCP_SERVER_URLS = [
 import os
 workspace_client = WorkspaceClient(
     host="https://e2-demo-field-eng.cloud.databricks.com/",
-    client_id="87eda4c8-cd9f-4168-83b0-3f702fa18959",
-    client_secret="dosef040510953e333a5cbf1432d9b39d87e"
+    client_id="your_client_id",
+    client_secret="your_client_secret"
 )
 
 
