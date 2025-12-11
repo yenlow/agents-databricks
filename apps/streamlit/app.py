@@ -1,10 +1,14 @@
 import os
+import sys
 import logging
 import streamlit as st
-from utils import get_user_info, ask_agent, ask_agent_mlflowclient, extract_text_content
 from uuid import uuid4
 from mlflow.deployments import get_deploy_client
 from databricks.sdk import WorkspaceClient
+
+# Add shared module to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'shared'))
+from utils import get_user_info, ask_agent, ask_agent_mlflowclient, extract_text_content
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -23,7 +27,6 @@ assert SERVING_ENDPOINT, (
 w = WorkspaceClient()
 client = get_deploy_client("databricks")
 user_info = get_user_info()
-# print(f"*********** USER INFO: {user_info}*******")
 
 # Streamlit app
 if "visibility" not in st.session_state:
@@ -33,7 +36,7 @@ if "visibility" not in st.session_state:
 st.sidebar.title(
     "🛠️ AATWW: Agent and the Whole Works"
 )
-st.sidebar.markdown("""E2E Multi-Agent Supervisor with: 
+st.sidebar.markdown("""E2E Multi-Agent Supervisor with:
 - AI/BI Genie (customer requests)
 - Vector Search (product documents)
 - SQL/Python functions
@@ -75,11 +78,6 @@ if prompt := st.chat_input("What is up?"):
                 "databricks_options": {"return_trace": True},
             }
         )
-        # If using mlflow client, messages_dict is expected
-        # just swap input key for messages key
-        # for i in st.session_state.messages:
-        #     i["messages"] = i.pop("input")
-        #     i.pop("custom_inputs")
 
         # Display user message in chat message container
         with st.chat_message("user"):
@@ -91,36 +89,24 @@ if prompt := st.chat_input("What is up?"):
             # Query the Databricks serving endpoint
             messages = st.session_state.messages[-1]
             print(messages)
-            # response = ask_agent(messages, w) # returns response object
-            # response_json = response.json()
             response_json = ask_agent_mlflowclient(
                 input_dict=messages, client=client
-            )  # returns response.json()
-            # print("==========response_json==========")
-            # print(response_json)
+            )
             text_contents = extract_text_content(response_json)
             custom_outputs = response_json.get("custom_outputs", {})
             tool_call = response_json.get("output", {})[0].get("name", '').replace("transfer_to_", "")
-            # # Join all text contents
-            # assistant_response = (
-            #     "\n".join(text_contents) if text_contents else "No text content found"
-            # )
-            # Use the first message instead of showing all the bad agent attempts
-            # if tool_call:
-            #     st.markdown(f"Tool: {tool_call}")
-            if len(text_contents)>0:
+            if len(text_contents) > 0:
                 assistant_response = text_contents[0]
             else:
                 assistant_response = "No response returned. Try again"
             st.markdown(assistant_response)
-                
+
 
         # Add assistant response to chat history
         st.session_state.messages.append(
             {
                 "input": [{"role": "assistant", "content": assistant_response}],
                 "custom_inputs": custom_outputs,
-                # "custom_inputs": {"thread_id": st.session_state.thread_id},
                 "databricks_options": {"return_trace": True},
             }
         )
