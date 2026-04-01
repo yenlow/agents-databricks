@@ -1,0 +1,13 @@
+resources:
+  model_serving_endpoints:
+    customer_service:
+      name: aatww-${bundle.target}
+      config:
+        served_entities:
+          - entity_name: ${var.catalog}.${var.schema}.customer_service
+            entity_version: "1"
+            scale_to_zero_enabled: true
+        auto_capture_config:
+          catalog_name: ${var.catalog}
+          schema_name: ${var.schema}
+          enabled: true

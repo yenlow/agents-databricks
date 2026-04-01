@@ -1,0 +1,14 @@
+resources:
+  apps:
+    customer_service_app:
+      name: aatww-app-${bundle.target}
+      description: Customer Service Multi-Agent Chat App
+      source_code_path: ../apps
+      config:
+        command:
+          - streamlit
+          - run
+          - app.py
+        env:
+          - name: SERVING_ENDPOINT
+            value: aatww-${bundle.target}
