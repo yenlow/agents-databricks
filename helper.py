@@ -1,12 +1,9 @@
 from databricks.sdk import WorkspaceClient
-import psycopg
 from psycopg_pool import ConnectionPool
 
 # from sqlalchemy import create_engine, text
 from uuid import uuid4
-import mlflow
-from typing import List
-import pandas as pd
+import polars as pl
 
 
 def get_SP_credentials(
@@ -139,15 +136,12 @@ class LakebaseConnect:
 
 # Convert for mlflow 3
 # https://docs.databricks.com/aws/en/mlflow3/genai/agent-eval-migration
-def evaldf_mlflow2_to_3(df: pd.DataFrame) -> List:
-    eval_dataset_v3 = []
-    for idx, row in df.iterrows():
-        response = row["expected_facts"][0]
-        eval_dataset_v3.append(
-            {
-                "inputs": {"request": row["request"]},
-                "outputs": {"response": response},
-                "expectations": {"expected_response": response},
-            }
-        )
-    return eval_dataset_v3
+def evaldf_mlflow2_to_3(df: pl.DataFrame) -> list[dict]:
+    return [
+        {
+            "inputs": {"request": row["request"]},
+            "outputs": {"response": row["expected_facts"][0]},
+            "expectations": {"expected_response": row["expected_facts"][0]},
+        }
+        for row in df.iter_rows(named=True)
+    ]

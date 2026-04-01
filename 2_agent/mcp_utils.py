@@ -1,47 +1,16 @@
 # this script wires up LLM + MCP + tooling, enabling an agent that can take real actions on Databricks, not just generate text.
 
 import asyncio
-from typing import Annotated, Any, Generator, List, Optional, Sequence, TypedDict, Union
 
-import mlflow
 import nest_asyncio
 from databricks.sdk import WorkspaceClient
-from databricks_langchain import (
-    ChatDatabricks,
-    UCFunctionToolkit,
-    VectorSearchRetrieverTool,
-)
 from databricks_mcp import DatabricksMCPClient, DatabricksOAuthClientProvider
-from langchain.messages import AIMessage, AIMessageChunk, AnyMessage
-from langchain_core.language_models import LanguageModelLike
-from langchain_core.runnables import RunnableConfig, RunnableLambda
 from langchain_core.tools import BaseTool
-from langgraph.graph import END, StateGraph
-from langgraph.graph.message import add_messages
-from langgraph.prebuilt.tool_node import ToolNode
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client as connect
-from mlflow.pyfunc import ResponsesAgent
-from mlflow.types.responses import (
-    ResponsesAgentRequest,
-    ResponsesAgentResponse,
-    ResponsesAgentStreamEvent,
-    output_to_responses_items_stream,
-    to_chat_completions_input,
-)
 from pydantic import create_model
 
 nest_asyncio.apply()
-
-############################################
-## Define your LLM endpoint and system prompt
-############################################
-# TODO: Replace with your model serving endpoint
-LLM_ENDPOINT_NAME = "databricks-claude-3-7-sonnet"
-llm = ChatDatabricks(endpoint=LLM_ENDPOINT_NAME)
-
-# TODO: Update with your system prompt
-system_prompt = "You are a helpful assistant who will call mcp server to provide user responses"
 
 ###############################################################################
 ## Configure MCP Servers for your agent
@@ -57,8 +26,6 @@ system_prompt = "You are a helpful assistant who will call mcp server to provide
 ## Note: External MCP servers get added to the "managed" URL list
 ## because their proxy endpoints are managed by Databricks.
 ###############################################################################
-
-# TODO: Choose your MCP server connection type and fill in the appropriate URLs.
 
 # ---------------------------------------------------------------------------
 # Managed MCP Server — simplest setup
@@ -87,25 +54,16 @@ MANAGED_MCP_SERVER_URLS = [
 # Use this if you’re running your own MCP server in Databricks.
 # These require OAuth with a service principal for machine-to-machine (M2M) auth.
 #
-# Uncomment and fill in the settings below to use a custom MCP server.
-#
-import os
-workspace_client = WorkspaceClient(
-    host="https://e2-demo-field-eng.cloud.databricks.com/",
-    client_id="your_client_id",
-    client_secret="your_client_secret"
-)
-
-
 # Custom MCP Servers — add URLs below (not managed or proxied by Databricks)
 CUSTOM_MCP_SERVER_URLS = [
-   "https://mcp-nitin-1444828305810485.aws.databricksapps.com/mcp"
+    "https://mcp-nitin-1444828305810485.aws.databricksapps.com/mcp"
 ]
 
 
 #####################
 ## MCP Tool Creation
 #####################
+
 
 # Define a custom LangChain tool that wraps functionality for calling MCP servers
 class MCPTool(BaseTool):
@@ -214,8 +172,10 @@ def create_langchain_tool_from_mcp(
 
 # Gather all tools from managed and custom MCP servers into a single list
 async def create_mcp_tools(
-    ws: WorkspaceClient, managed_server_urls: List[str] = None, custom_server_urls: List[str] = None
-) -> List[MCPTool]:
+    ws: WorkspaceClient,
+    managed_server_urls: list[str] = None,
+    custom_server_urls: list[str] = None,
+) -> list[MCPTool]:
     """Create LangChain tools from both managed and custom MCP servers"""
     tools = []
 
@@ -225,7 +185,9 @@ async def create_mcp_tools(
             try:
                 mcp_tools = get_managed_mcp_tools(ws, server_url)
                 for mcp_tool in mcp_tools:
-                    tool = create_langchain_tool_from_mcp(mcp_tool, server_url, ws, is_custom=False)
+                    tool = create_langchain_tool_from_mcp(
+                        mcp_tool, server_url, ws, is_custom=False
+                    )
                     tools.append(tool)
             except Exception as e:
                 print(f"Error loading tools from managed server {server_url}: {e}")
@@ -236,10 +198,11 @@ async def create_mcp_tools(
             try:
                 mcp_tools = await get_custom_mcp_tools(ws, server_url)
                 for mcp_tool in mcp_tools:
-                    tool = create_langchain_tool_from_mcp(mcp_tool, server_url, ws, is_custom=True)
+                    tool = create_langchain_tool_from_mcp(
+                        mcp_tool, server_url, ws, is_custom=True
+                    )
                     tools.append(tool)
             except Exception as e:
                 print(f"Error loading tools from custom server {server_url}: {e}")
 
     return tools
-    
