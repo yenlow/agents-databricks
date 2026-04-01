@@ -1,0 +1,32 @@
+bundle:
+  name: agents-databricks
+
+include:
+  - "resources/*.yml"
+
+variables:
+  catalog:
+    description: Unity Catalog catalog name
+    default: yen_training
+  schema:
+    description: Unity Catalog schema name
+    default: agents
+  warehouse_id:
+    description: SQL Warehouse ID for statement execution
+  host:
+    description: Databricks workspace host
+    default: https://e2-demo-field-eng.cloud.databricks.com/
+  llm_endpoint:
+    default: databricks-meta-llama-3-3-70b-instruct
+  genie_space_id:
+    default: 01f0ca478c1517b2ac6fdcc04eec967f
+
+targets:
+  dev:
+    default: true
+    mode: development
+    workspace:
+      profile: dev
+    variables:
+      catalog: yen_training
+      schema: agents

@@ -1,0 +1,44 @@
+[project]
+name = "agents-databricks"
+version = "0.1.0"
+description = "Multi-agent customer service system on Databricks"
+requires-python = ">=3.11"
+dependencies = [
+    "langchain",
+    "langchain-community",
+    "langgraph-supervisor",
+    "pydantic>=2.11",
+    "databricks-langchain",
+    "databricks-mcp",
+    "databricks-vectorsearch",
+    "databricks-sdk",
+    "mlflow>=3.3.2",
+    "pyyaml",
+    "langgraph-checkpoint",
+    "langgraph-checkpoint-postgres",
+    "mcp>=1.23",
+    "psycopg>=3.2",
+    "psycopg-binary>=3.2",
+    "psycopg-pool>=3.2",
+    "polars",
+    "databricks-agents",
+    "streamlit",
+    "nest-asyncio",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff",
+    "pytest",
+    "pytest-asyncio",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
